@@ -22,11 +22,18 @@ module ActiveAgents
       # Path a mounted ActiveAgent::Dashboard::Engine serves traces on.
       LOCAL_ENDPOINT_PATH = "/active_agent/api/traces"
 
+      # Attribute keys scrubbed from spans before delivery. Name-based — a
+      # secret inside free text is not caught; see the wiki's privacy page.
+      DEFAULT_REDACT_ATTRIBUTES = %w[password secret token key credential api_key].freeze
+
       attr_accessor :endpoint, :api_key, :service_name, :environment,
                     :resource_attributes, :logger, :timeout, :open_timeout,
-                    :async, :sample_rate, :error_message_limit
+                    :async, :sample_rate, :error_message_limit,
+                    :enabled, :batch_size, :flush_interval,
+                    :capture_bodies, :redact_attributes, :local_store
 
       def initialize
+        @enabled = true
         @endpoint = DEFAULT_ENDPOINT
         @api_key = nil
         @service_name = nil
@@ -38,12 +45,35 @@ module ActiveAgents
         @async = true
         @sample_rate = 1.0
         @error_message_limit = 200
+        @batch_size = 100
+        @flush_interval = 5
+        @capture_bodies = false
+        @redact_attributes = DEFAULT_REDACT_ATTRIBUTES.dup
+        @local_store = nil
       end
 
-      # Traces are only sent when there is somewhere to send them and
-      # something to authenticate with.
+      # Traces are only sent when there is somewhere to send them: an endpoint
+      # plus something to authenticate with, or a local store that bypasses
+      # HTTP entirely.
       def configured?
-        !endpoint.to_s.empty? && !api_key.to_s.empty?
+        local_store? || (!endpoint.to_s.empty? && !api_key.to_s.empty?)
+      end
+
+      # An explicit kill-switch over and above configured?. Defaults to true —
+      # for adapters, the presence of an api_key remains the effective switch;
+      # frameworks that want opt-in default this to false.
+      def enabled?
+        @enabled == true
+      end
+
+      # A callable (trace_hash, sdk_hash) that persists traces in-process —
+      # the ActiveAgent dashboard wires this to its TelemetryTrace model.
+      def local_store?
+        !@local_store.nil?
+      end
+
+      def capture_bodies?
+        @capture_bodies == true
       end
 
       def async?
@@ -56,6 +86,17 @@ module ActiveAgents
         return false if sample_rate <= 0.0
 
         rand < sample_rate
+      end
+      alias should_sample? sample?
+
+      # Loads settings from a hash — how config/*.yml files reach here.
+      # Unknown keys are ignored, so a newer config file works on an older gem.
+      def load_from_hash(hash)
+        (hash || {}).each do |key, value|
+          writer = "#{key}="
+          public_send(writer, value) if respond_to?(writer)
+        end
+        self
       end
 
       # Falls back to the Rails application name, then to a generic label, so
@@ -74,12 +115,17 @@ module ActiveAgents
 
       def to_h
         {
+          enabled: enabled,
           endpoint: endpoint,
           api_key: api_key ? "[REDACTED]" : nil,
           service_name: resolved_service_name,
           environment: resolved_environment,
           sample_rate: sample_rate,
-          async: async
+          async: async,
+          batch_size: batch_size,
+          flush_interval: flush_interval,
+          capture_bodies: capture_bodies,
+          local_store: local_store? ? "[CALLABLE]" : nil
         }
       end
 

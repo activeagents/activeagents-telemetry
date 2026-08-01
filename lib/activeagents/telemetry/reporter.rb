@@ -34,7 +34,7 @@ module ActiveAgents
       def report(traces)
         traces = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
         return if traces.empty?
-        return unless configuration.configured?
+        return unless configuration.enabled? && configuration.configured?
         return unless configuration.sample?
 
         body = payload_for(traces)
@@ -49,7 +49,7 @@ module ActiveAgents
       def report_now(traces)
         traces = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
         return if traces.empty?
-        return unless configuration.configured?
+        return unless configuration.enabled? && configuration.configured?
 
         deliver(payload_for(traces))
       end
@@ -58,7 +58,7 @@ module ActiveAgents
 
       def payload_for(traces)
         {
-          "traces" => traces.map { |trace| trace.respond_to?(:to_h) ? trace.to_h : trace },
+          "traces" => traces.map { |trace| redact(trace.respond_to?(:to_h) ? trace.to_h : trace) },
           "sdk" => {
             "name" => @sdk_name,
             "version" => @sdk_version,
@@ -68,7 +68,29 @@ module ActiveAgents
         }
       end
 
+      # Scrubs span attributes whose key matches the configured redaction
+      # list. Matching is by attribute key segment ("api_key", "http.api_key"),
+      # not by value — a secret inside free text is not caught here.
+      def redact(trace_hash)
+        redacted = Array(configuration.redact_attributes).map(&:to_s)
+        return trace_hash if redacted.empty?
+
+        spans = trace_hash["spans"] || trace_hash[:spans] || []
+        spans.each do |span|
+          attributes = span["attributes"] || span[:attributes]
+          next unless attributes.is_a?(Hash)
+
+          attributes.each_key do |key|
+            segments = key.to_s.downcase.split(".")
+            attributes[key] = "[REDACTED]" if segments.any? { |segment| redacted.include?(segment) }
+          end
+        end
+        trace_hash
+      end
+
       def deliver(body)
+        return deliver_locally(body) if configuration.local_store?
+
         uri = URI.parse(configuration.endpoint)
 
         http = Net::HTTP.new(uri.host, uri.port)
@@ -89,6 +111,18 @@ module ActiveAgents
         response
       rescue StandardError => e
         log("#{e.class}: #{e.message}")
+        nil
+      end
+
+      # Hands each trace to the configured local store instead of HTTP —
+      # nothing leaves the process. Per-trace rescue: one bad row must not
+      # drop its batch-mates.
+      def deliver_locally(body)
+        body["traces"].each do |trace|
+          configuration.local_store.call(trace, body["sdk"])
+        rescue StandardError => e
+          log("local store failed: #{e.class}: #{e.message}")
+        end
         nil
       end
 

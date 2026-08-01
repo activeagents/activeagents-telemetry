@@ -7,6 +7,7 @@ require_relative "telemetry/configuration"
 require_relative "telemetry/span"
 require_relative "telemetry/trace"
 require_relative "telemetry/reporter"
+require_relative "telemetry/batching_reporter"
 
 # Shared core for reporting LLM traces to ActiveAgents.
 #

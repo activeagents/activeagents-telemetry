@@ -4,6 +4,17 @@
 
 ### Added
 
+- Feature parity with the ActiveAgent framework's built-in telemetry, so the
+  framework can adopt this gem as a dependency: an `enabled` kill-switch,
+  `load_from_hash` for YAML-driven config, child spans (`Span#add_span`,
+  flattened by `Trace#to_h`), `Span#set_status`/`status_message`/`measure`,
+  `BatchingReporter` (buffered delivery with `batch_size`/`flush_interval`),
+  and a pluggable `local_store` for in-process persistence without HTTP.
+- Attribute redaction is now actually applied at delivery: span attribute
+  keys matching `redact_attributes` (by dot-separated segment) are scrubbed.
+  The framework's previous implementation declared the option but never
+  enforced it.
+
 - `activeagents-telemetry` — shared core extracted from the ActiveAgent gem's
   telemetry and the RubyLLM adapter: `Configuration`, `Span`, `Trace`, and
   `Reporter`, which together own the `POST /v1/traces` wire format.

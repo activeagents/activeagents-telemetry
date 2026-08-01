@@ -47,11 +47,17 @@ module ActiveAgents
           "environment" => environment,
           "timestamp" => timestamp,
           "resource_attributes" => resource_attributes,
-          "spans" => spans.map(&:to_h)
+          "spans" => spans.flat_map { |span| flatten(span) }.map(&:to_h)
         }
       end
 
       private
+
+      # Spans built through Span#add_span nest as children; the wire format is
+      # flat, with parentage carried by parent_span_id.
+      def flatten(span)
+        [ span ] + span.children.flat_map { |child| flatten(child) }
+      end
 
       # The trace's own end time, so out-of-order delivery still lands the
       # trace at the moment it actually finished.
