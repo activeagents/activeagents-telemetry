@@ -20,6 +20,7 @@ module ActiveAgents
         @buffer = []
         @mutex = Mutex.new
         @flusher = nil
+        @send_threads = []
         @shutdown = false
       end
 
@@ -28,7 +29,7 @@ module ActiveAgents
         return if @shutdown
 
         accepted = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
-                                .select { configuration.sample? }
+                                .select { sample_trace? }
         return if accepted.empty?
         return unless configuration.enabled? && configuration.configured?
 
@@ -49,10 +50,13 @@ module ActiveAgents
         nil
       end
 
-      # Flushes and stops the background thread. Idempotent.
+      # Flushes, waits out in-flight sends, and stops the background thread —
+      # traces reported just before process exit are delivered, not dropped.
+      # Idempotent.
       def shutdown
         @shutdown = true
         flush
+        @mutex.synchronize { @send_threads.dup }.each { |thread| thread.join(configuration.timeout) }
         @flusher&.kill
         @flusher = nil
       end
@@ -61,7 +65,14 @@ module ActiveAgents
 
       def deliver_batch(batch, blocking: false)
         body = payload_for(batch)
-        blocking || !configuration.async? ? deliver(body) : Thread.new { deliver(body) }
+        return deliver(body) if blocking || !configuration.async?
+
+        thread = Thread.new { deliver(body) }
+        @mutex.synchronize do
+          @send_threads.select!(&:alive?)
+          @send_threads << thread
+        end
+        thread
       rescue StandardError => e
         log("failed to build trace payload: #{e.class}: #{e.message}")
       end

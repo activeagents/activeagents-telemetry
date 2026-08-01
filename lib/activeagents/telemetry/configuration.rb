@@ -89,12 +89,21 @@ module ActiveAgents
       end
       alias should_sample? sample?
 
+      FLOAT_SETTINGS = %w[sample_rate].freeze
+      INTEGER_SETTINGS = %w[batch_size flush_interval timeout open_timeout error_message_limit].freeze
+
       # Loads settings from a hash — how config/*.yml files reach here.
-      # Unknown keys are ignored, so a newer config file works on an older gem.
+      # Unknown keys are ignored, so a newer config file works on an older
+      # gem; numeric settings are coerced because ERB-interpolated YAML
+      # values arrive as strings.
       def load_from_hash(hash)
         (hash || {}).each do |key, value|
           writer = "#{key}="
-          public_send(writer, value) if respond_to?(writer)
+          next unless respond_to?(writer)
+
+          value = value.to_f if FLOAT_SETTINGS.include?(key.to_s)
+          value = value.to_i if INTEGER_SETTINGS.include?(key.to_s)
+          public_send(writer, value)
         end
         self
       end

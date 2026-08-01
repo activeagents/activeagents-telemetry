@@ -23,10 +23,14 @@ module ActiveAgents
 
       # @param sdk_name [String] overridden by adapters so ingest can tell
       #   which integration produced a trace.
-      def initialize(configuration, sdk_name: SDK_NAME, sdk_version: VERSION)
+      # @param sample [Boolean] pass false when the caller already applied
+      #   head-based sampling at trace creation — sampling twice compounds
+      #   the rate to rate².
+      def initialize(configuration, sdk_name: SDK_NAME, sdk_version: VERSION, sample: true)
         @configuration = configuration
         @sdk_name = sdk_name
         @sdk_version = sdk_version
+        @sample = sample
       end
 
       # @param traces [Trace, Array<Trace>] traces to deliver
@@ -35,7 +39,7 @@ module ActiveAgents
         traces = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
         return if traces.empty?
         return unless configuration.enabled? && configuration.configured?
-        return unless configuration.sample?
+        return unless sample_trace?
 
         body = payload_for(traces)
         configuration.async? ? Thread.new { deliver(body) } : deliver(body)
@@ -55,6 +59,10 @@ module ActiveAgents
       end
 
       private
+
+      def sample_trace?
+        !@sample || configuration.sample?
+      end
 
       def payload_for(traces)
         {
