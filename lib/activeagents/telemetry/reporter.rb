@@ -68,13 +68,27 @@ module ActiveAgents
         (traces.is_a?(Array) ? traces : [ traces ]).reject { |trace| trace.nil? || (trace.respond_to?(:empty?) && trace.empty?) }
       end
 
+      # Trace#to_h is already string-keyed; raw hashes may arrive symbol-keyed
+      # and both local stores and ingest read string keys.
+      def serialize(trace)
+        trace.is_a?(Trace) ? trace.to_h : deep_stringify(trace)
+      end
+
+      def deep_stringify(value)
+        case value
+        when Hash then value.each_with_object({}) { |(key, inner), out| out[key.to_s] = deep_stringify(inner) }
+        when Array then value.map { |inner| deep_stringify(inner) }
+        else value
+        end
+      end
+
       def sample_trace?
         !@sample || configuration.sample?
       end
 
       def payload_for(traces)
         {
-          "traces" => traces.map { |trace| redact(trace.respond_to?(:to_h) ? trace.to_h : trace) },
+          "traces" => traces.map { |trace| redact(serialize(trace)) },
           "sdk" => {
             "name" => @sdk_name,
             "version" => @sdk_version,

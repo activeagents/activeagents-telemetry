@@ -139,6 +139,16 @@ class TestReporter < Minitest::Test
     assert_equal "abc123", captured.first["traces"].first["trace_id"]
   end
 
+  # Local stores and ingest read string keys.
+  def test_symbol_keyed_trace_hashes_are_stringified
+    reporter, captured = capturing_reporter
+    reporter.report({ trace_id: "abc123", spans: [ { span_id: "s1", tokens: { input: 9 } } ] })
+
+    trace = captured.first["traces"].first
+    assert_equal "abc123", trace["trace_id"]
+    assert_equal 9, trace["spans"].first["tokens"]["input"]
+  end
+
   def test_sampling_drops_traces
     reporter, captured = capturing_reporter(fresh_configuration(sample_rate: 0.0))
     reporter.report(build_trace)
