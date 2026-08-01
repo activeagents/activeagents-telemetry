@@ -28,8 +28,7 @@ module ActiveAgents
       def report(traces)
         return if @shutdown
 
-        accepted = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
-                                .select { sample_trace? }
+        accepted = normalize(traces).select { sample_trace? }
         return if accepted.empty?
         return unless configuration.enabled? && configuration.configured?
 

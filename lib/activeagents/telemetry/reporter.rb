@@ -33,10 +33,11 @@ module ActiveAgents
         @sample = sample
       end
 
-      # @param traces [Trace, Array<Trace>] traces to deliver
+      # @param traces [Trace, Hash, Array<Trace, Hash>] traces to deliver —
+      #   Trace objects or already-serialized trace hashes
       # @return [void]
       def report(traces)
-        traces = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
+        traces = normalize(traces)
         return if traces.empty?
         return unless configuration.enabled? && configuration.configured?
         return unless sample_trace?
@@ -51,7 +52,7 @@ module ActiveAgents
 
       # Blocking delivery, for tests and for at-exit flushes.
       def report_now(traces)
-        traces = Array(traces).reject { |trace| trace.respond_to?(:empty?) && trace.empty? }
+        traces = normalize(traces)
         return if traces.empty?
         return unless configuration.enabled? && configuration.configured?
 
@@ -59,6 +60,13 @@ module ActiveAgents
       end
 
       private
+
+      # Array() is wrong here: it would explode a raw trace hash into
+      # key/value pairs. Traces arrive as Trace objects or serialized hashes,
+      # singly or in arrays.
+      def normalize(traces)
+        (traces.is_a?(Array) ? traces : [ traces ]).reject { |trace| trace.nil? || (trace.respond_to?(:empty?) && trace.empty?) }
+      end
 
       def sample_trace?
         !@sample || configuration.sample?

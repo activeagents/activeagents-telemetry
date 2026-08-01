@@ -131,6 +131,14 @@ class TestReporter < Minitest::Test
     assert_empty captured
   end
 
+  # A raw hash must not be exploded into key/value pairs by Array().
+  def test_accepts_an_already_serialized_trace_hash
+    reporter, captured = capturing_reporter
+    reporter.report({ "trace_id" => "abc123", "service_name" => "test-app", "spans" => [] })
+
+    assert_equal "abc123", captured.first["traces"].first["trace_id"]
+  end
+
   def test_sampling_drops_traces
     reporter, captured = capturing_reporter(fresh_configuration(sample_rate: 0.0))
     reporter.report(build_trace)
