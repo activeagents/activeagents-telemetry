@@ -1,0 +1,32 @@
+name: Release
+
+# Builds every gem in the repo and attaches them to a GitHub release.
+# Publishing to RubyGems stays a deliberate manual step:
+#   gem push pkg/<name>-<version>.gem
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+      - run: bundle exec rake build_all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gems
+          path: pkg/*.gem
+      - name: Attach gems to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pkg/*.gem
+          generate_release_notes: true
