@@ -48,7 +48,9 @@ enclosing event, 2.x drives a flat `step until complete?` loop whose rounds
 are siblings with tool calls between them. Rounds are accumulated and flushed
 on the round that ends the turn, so both produce the same trace.
 
-Tool arguments and results are never sent; error messages are truncated.
+Prompts, completions, and tool arguments/results are sent only when the
+configuration's `capture_bodies` is enabled (off by default, truncated to
+4,000 characters); error messages are truncated.
 
 ## Naming the traffic
 
