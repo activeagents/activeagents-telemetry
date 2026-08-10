@@ -1,8 +1,9 @@
 name: Release
 
-# Builds every gem in the repo and attaches them to a GitHub release.
-# Publishing to RubyGems stays a deliberate manual step:
-#   gem push pkg/<name>-<version>.gem
+# Builds every gem in the repo, attaches them to a GitHub release, and
+# publishes to RubyGems via trusted publishing (OIDC — no stored API key).
+# Requires a trusted publisher configured on rubygems.org for EACH gem
+# name in this repo, pointing at this repository and this workflow file.
 on:
   push:
     tags: [ "v*" ]
@@ -30,3 +31,25 @@ jobs:
         with:
           files: pkg/*.gem
           generate_release_notes: true
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC exchange with rubygems.org
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+      - uses: rubygems/configure-rubygems-credentials@v1
+      - name: Publish the core, then the adapter that depends on it
+        run: |
+          gem build activeagents-telemetry.gemspec
+          gem push activeagents-telemetry-*.gem
+          cd adapters/ruby_llm
+          gem build activeagents-telemetry-ruby_llm.gemspec
+          gem push activeagents-telemetry-ruby_llm-*.gem
