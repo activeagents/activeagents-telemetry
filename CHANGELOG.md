@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-10
+
+First public release of both gems: `activeagents-telemetry` (the shared
+core) and `activeagents-telemetry-ruby_llm` (the RubyLLM adapter).
+
 ### Added
 
 - Feature parity with the ActiveAgent framework's built-in telemetry, so the
