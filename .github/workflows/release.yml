@@ -33,7 +33,10 @@ jobs:
           generate_release_notes: true
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
+    # Tag pushes release; workflow_dispatch covers environments where tags
+    # can't be pushed directly (gem push is idempotent-failing, so an
+    # accidental re-run can't double-publish a version).
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
