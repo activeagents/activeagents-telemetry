@@ -144,6 +144,50 @@ class TestRubyLLMAdapter < Minitest::Test
     ActiveAgents::Telemetry.reset!
   end
 
+  ContentMsg = Struct.new(:role, :content, :input_tokens, :output_tokens, :thinking_tokens)
+
+  def test_does_not_capture_content_by_default
+    payload = chat_payload(input_messages: [ ContentMsg.new("user", "what is up?") ])
+    instrument("tool_call.ruby_llm", tool_name: "search", tool_call_id: "t1", tool_arguments: { q: "x" }, result_content: "y") { nil }
+    instrument("chat.ruby_llm", payload) do
+      payload[:messages_after] = payload[:input_messages] + [ ContentMsg.new("assistant", "not much", 1, 1, 0) ]
+    end
+
+    trace = traces.first
+    root_attributes = spans_of(trace, "root").first["attributes"]
+    tool_attributes = spans_of(trace, "tool").first["attributes"]
+    refute_includes root_attributes.keys, "llm.prompt"
+    refute_includes root_attributes.keys, "llm.completion"
+    refute_includes tool_attributes.keys, "tool.arguments"
+    refute_includes tool_attributes.keys, "tool.result"
+  end
+
+  def test_captures_conversation_and_tool_io_when_capture_bodies_enabled
+    ActiveAgents::Telemetry.configure { |config| config.capture_bodies = true }
+    subscribe
+
+    payload = chat_payload(input_messages: [
+      ContentMsg.new("system", "Be terse."),
+      ContentMsg.new("system", "Answer in English."),
+      ContentMsg.new("user", "what is up?" * 1_000)
+    ])
+    instrument("tool_call.ruby_llm", tool_name: "search", tool_call_id: "t1", tool_arguments: { q: "x" }, result_content: "y") { nil }
+    instrument("chat.ruby_llm", payload) do
+      payload[:messages_after] = payload[:input_messages] + [ ContentMsg.new("assistant", "not much", 1, 1, 0) ]
+    end
+
+    trace = traces.first
+    root_attributes = spans_of(trace, "root").first["attributes"]
+    tool_attributes = spans_of(trace, "tool").first["attributes"]
+    assert_equal ActiveAgents::Telemetry::RubyLLM::CONTENT_LIMIT, root_attributes["llm.prompt"].length
+    assert_equal "Be terse.\n\nAnswer in English.", root_attributes["llm.instructions"]
+    assert_equal "not much", root_attributes["llm.completion"]
+    assert_equal '{"q":"x"}', tool_attributes["tool.arguments"]
+    assert_equal "y", tool_attributes["tool.result"]
+  ensure
+    ActiveAgents::Telemetry.reset!
+  end
+
   private
 
   def subscribe_inheriting

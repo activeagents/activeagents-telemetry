@@ -50,7 +50,8 @@ root   SupportBot.respond              1,240ms   OK
    └─ tool tool.search_docs               310ms   OK
 ```
 
-Tool arguments and results are never sent. Error messages are truncated and
+Prompts, completions, and tool arguments/results are sent only when
+`capture_bodies` is enabled (off by default). Error messages are truncated and
 backtraces are never transmitted.
 
 ## Self-hosting
