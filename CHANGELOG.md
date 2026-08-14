@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0] - 2026-08-14
+
+### Added
+
+- The RubyLLM adapter captures conversation content when the configuration's
+  `capture_bodies` is enabled: `llm.prompt`, `llm.instructions` and
+  `llm.completion` on the root span, and `tool.arguments` / `tool.result` on
+  each tool span. Each value is truncated to 4,000 characters
+  (`RubyLLM::CONTENT_LIMIT`). `llm.instructions` joins every system message,
+  since RubyLLM's `with_instructions` appends by default and reporting only
+  the last one would hide a layered base prompt. A tool span records a result
+  only when the call succeeded; a raised tool reports its truncated error
+  message instead.
+
+  Capture stays **off** by default. Prompts and tool results carry whatever
+  the application sends the model, so enabling this is a data-handling
+  decision — the truncation is a cap on trace size, not a redaction boundary.
+
 ## [Unreleased]
 
 ## [0.1.0] - 2026-08-10

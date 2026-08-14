@@ -27,7 +27,9 @@ module ActiveAgents
     # Tokens are summed per round from the assistant messages that round added,
     # so a repeated event-level count is never double counted.
     #
-    # Tool arguments and results are never sent; error messages are truncated.
+    # Prompts, completions, and tool arguments/results are not sent unless the
+    # configuration's capture_bodies is enabled (they may contain sensitive
+    # data); error messages are truncated.
     module RubyLLM
       AGENT_KEY = :activeagents_telemetry_ruby_llm_agent
       STATE_KEY = :activeagents_telemetry_ruby_llm_state
@@ -36,6 +38,8 @@ module ActiveAgents
       # A turn that never reaches a final round (a halted tool call, or an app
       # driving RubyLLM 2.x's `step` by hand) would otherwise accumulate forever.
       MAX_TURN_SECONDS = 600
+      # Captured prompt/completion/tool content is truncated to this many characters.
+      CONTENT_LIMIT = 4_000
 
       DEFAULT_AGENT = { name: "RubyLLM::Chat", action: "chat" }.freeze
 
@@ -139,11 +143,16 @@ module ActiveAgents
 
         def build_tool_span(payload, started_at, finished_at)
           error = payload[:exception_object]
+          attributes = { "tool.name" => payload[:tool_name].to_s, "tool.call_id" => payload[:tool_call_id].to_s }
+          if configuration.capture_bodies?
+            attributes["tool.arguments"] = tool_io_json(payload[:tool_arguments])
+            attributes["tool.result"] = tool_io_json(payload[:result_content]) unless error
+          end
           span = Span.new(
             "tool.#{payload[:tool_name]}",
             type: "tool",
             start_time: started_at,
-            attributes: { "tool.name" => payload[:tool_name].to_s, "tool.call_id" => payload[:tool_call_id].to_s }
+            attributes: attributes
           )
           span.record_error(error, message_limit: configuration.error_message_limit) if error
           span.finish(at: finished_at)
@@ -163,14 +172,17 @@ module ActiveAgents
             resource_attributes: configuration.resource_attributes
           )
 
+          root_attributes = {
+            "agent.class" => agent[:name],
+            "agent.action" => agent[:action],
+            "agent.provider" => payload[:provider].to_s,
+            "agent.model" => payload[:model].to_s
+          }
+          root_attributes.merge!(conversation_attributes(payload)) if configuration.capture_bodies?
+
           root = trace.span(
             "#{agent[:name]}.#{agent[:action]}", type: "root", start_time: started_at,
-            attributes: {
-              "agent.class" => agent[:name],
-              "agent.action" => agent[:action],
-              "agent.provider" => payload[:provider].to_s,
-              "agent.model" => payload[:model].to_s
-            }
+            attributes: root_attributes
           )
 
           llm = trace.span(
@@ -213,6 +225,59 @@ module ActiveAgents
         rescue StandardError => e
           warn "[#{SDK_NAME}] agent_resolver failed: #{e.class}: #{e.message}"
           nil
+        end
+
+        # The prompt that opened the turn and the answer that closed it — the two
+        # ends a trace is otherwise missing. System instructions are included:
+        # they are the most common cause of a surprising answer.
+        def conversation_attributes(payload)
+          input = Array(payload[:input_messages])
+          new_messages = Array(payload[:messages_after])[input.size..] || []
+
+          attributes = {}
+          if (prompt = last_message_text(input, "user"))
+            attributes["llm.prompt"] = truncate_captured(prompt)
+          end
+          if (instructions = system_instructions(input))
+            attributes["llm.instructions"] = truncate_captured(instructions)
+          end
+          if (completion = last_message_text(new_messages, "assistant"))
+            attributes["llm.completion"] = truncate_captured(completion)
+          end
+          attributes
+        end
+
+        # RubyLLM's `with_instructions` appends by default, so a chat can carry
+        # several system messages and the model sees all of them. Join rather
+        # than taking the last, or an app that layers a base prompt with a
+        # per-request one would report only the fragment.
+        def system_instructions(messages)
+          texts = messages.select do |candidate|
+            candidate.respond_to?(:role) && candidate.role.to_s == "system" &&
+              candidate.respond_to?(:content) && !candidate.content.to_s.empty?
+          end.map { |message| message.content.to_s }
+
+          texts.empty? ? nil : texts.join("\n\n")
+        end
+
+        def last_message_text(messages, role)
+          message = messages.reverse.find do |candidate|
+            candidate.respond_to?(:role) && candidate.role.to_s == role &&
+              candidate.respond_to?(:content) && !candidate.content.to_s.empty?
+          end
+          text = message&.content.to_s
+          text.empty? ? nil : text
+        end
+
+        def tool_io_json(value)
+          json = value.is_a?(String) ? value : JSON.generate(value)
+          truncate_captured(json)
+        rescue StandardError
+          value.inspect[0, CONTENT_LIMIT]
+        end
+
+        def truncate_captured(text)
+          text.to_s[0, CONTENT_LIMIT]
         end
 
         def token_totals(payload)
