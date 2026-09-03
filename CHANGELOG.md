@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `Configuration::LOCAL_ENDPOINT_PATH`, the class docs and the README's
+  self-hosting example pointed at `/active_agent/api/traces`, a path no
+  current dashboard mount serves. The actionagent engine ingests at
+  `<mount>/api/traces` and is mounted at `/activeagents` by default, so the
+  constant and the docs now say `/activeagents/api/traces` and note that a
+  custom mount changes the prefix. (#3)
+
 ## [0.2.0] - 2026-08-14
 
 ### Added
@@ -17,8 +28,6 @@
   Capture stays **off** by default. Prompts and tool results carry whatever
   the application sends the model, so enabling this is a data-handling
   decision — the truncation is a cap on trace size, not a redaction boundary.
-
-## [Unreleased]
 
 ## [0.1.0] - 2026-08-10
 
