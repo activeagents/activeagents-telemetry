@@ -56,11 +56,15 @@ backtraces are never transmitted.
 
 ## Self-hosting
 
-Point the endpoint at your mounted dashboard — same gems, same wire format:
+Point the endpoint at your mounted dashboard — same gems, same wire format.
+The dashboard engine ingests at `<mount>/api/traces`; its install generator
+mounts it at `/activeagents`, so on a default install that is:
 
 ```ruby
-config.endpoint = "https://your-app.example.com/active_agent/api/traces"
+config.endpoint = "https://your-app.example.com/activeagents/api/traces"
 ```
+
+If you mounted `ActionAgent::Engine` somewhere else, use that prefix instead.
 
 ## Development
 
