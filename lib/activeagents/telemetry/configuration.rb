@@ -14,13 +14,17 @@ module ActiveAgents
     #   end
     #
     # A self-hosted ActiveAgent dashboard is the same thing with a different
-    # endpoint — point it at "https://your-app.example.com/active_agent/api/traces".
+    # endpoint — point it at "https://your-app.example.com/activeagents/api/traces"
+    # (the actionagent engine's default mount; adjust the prefix to wherever
+    # the host app actually mounted ActionAgent::Engine).
     class Configuration
       # The hosted platform. Self-hosters override `endpoint`.
       DEFAULT_ENDPOINT = "https://api.activeagents.ai/v1/traces"
 
-      # Path a mounted ActiveAgent::Dashboard::Engine serves traces on.
-      LOCAL_ENDPOINT_PATH = "/active_agent/api/traces"
+      # The ingest path of the dashboard engine (ActionAgent::Engine) at its
+      # default mount. The engine ingests at "<mount>/api/traces", so a host
+      # that mounted it elsewhere uses that prefix instead.
+      LOCAL_ENDPOINT_PATH = "/activeagents/api/traces"
 
       # Attribute keys scrubbed from spans before delivery. Name-based — a
       # secret inside free text is not caught; see the wiki's privacy page.
