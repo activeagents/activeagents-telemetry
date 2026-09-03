@@ -21,9 +21,9 @@ module ActiveAgents
       # The hosted platform. Self-hosters override `endpoint`.
       DEFAULT_ENDPOINT = "https://api.activeagents.ai/v1/traces"
 
-      # Path the dashboard engine (ActionAgent::Engine) serves traces on at
-      # its default mount. The engine ingests at "<mount>/api/traces", so a
-      # host that mounted it elsewhere uses that prefix instead.
+      # The ingest path of the dashboard engine (ActionAgent::Engine) at its
+      # default mount. The engine ingests at "<mount>/api/traces", so a host
+      # that mounted it elsewhere uses that prefix instead.
       LOCAL_ENDPOINT_PATH = "/activeagents/api/traces"
 
       # Attribute keys scrubbed from spans before delivery. Name-based — a

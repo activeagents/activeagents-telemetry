@@ -29,8 +29,6 @@
   the application sends the model, so enabling this is a data-handling
   decision — the truncation is a cap on trace size, not a redaction boundary.
 
-## [Unreleased]
-
 ## [0.1.0] - 2026-08-10
 
 First public release of both gems: `activeagents-telemetry` (the shared
