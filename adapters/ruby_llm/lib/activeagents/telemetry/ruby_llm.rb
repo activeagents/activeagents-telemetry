@@ -91,10 +91,16 @@ module ActiveAgents
 
         attr_writer :reporter
 
-        # Attributes traces inside the block to a named agent/action.
-        def with_agent(name, action: "chat")
+        # Attributes traces inside the block to a named agent/action. Correlation
+        # attributes and the callback apply to this scope only. Short-lived
+        # evaluation commands can deliver synchronously without changing the
+        # application's shared reporter configuration.
+        def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: false)
           previous = Thread.current[AGENT_KEY]
-          Thread.current[AGENT_KEY] = { name: name, action: action }
+          Thread.current[AGENT_KEY] = {
+            name: name, action: action, attributes: attributes.to_h.transform_keys(&:to_s),
+            on_trace: on_trace, synchronous: synchronous
+          }
           yield
         ensure
           Thread.current[AGENT_KEY] = previous
@@ -172,12 +178,12 @@ module ActiveAgents
             resource_attributes: configuration.resource_attributes
           )
 
-          root_attributes = {
+          root_attributes = (agent[:attributes] || {}).merge(
             "agent.class" => agent[:name],
             "agent.action" => agent[:action],
             "agent.provider" => payload[:provider].to_s,
             "agent.model" => payload[:model].to_s
-          }
+          )
           root_attributes.merge!(conversation_attributes(payload)) if configuration.capture_bodies?
 
           root = trace.span(
@@ -206,7 +212,14 @@ module ActiveAgents
             trace.add_span(tool_span)
           end
 
-          reporter.report(trace)
+          notify_trace(agent[:on_trace], trace)
+          agent[:synchronous] ? reporter.report_now(trace) : reporter.report(trace)
+        end
+
+        def notify_trace(callback, trace)
+          callback&.call(trace)
+        rescue StandardError => e
+          warn "[#{SDK_NAME}] on_trace failed: #{e.class}"
         end
 
         def turn_expired?(turn)

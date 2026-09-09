@@ -92,3 +92,34 @@ an explicit `flush!`.
 ```bash
 bundle exec rake test
 ```
+
+## Correlating evaluation traces
+
+Use a separate identity for judge calls and attach stable evaluation identifiers
+without changing the application's default agent resolver:
+
+```ruby
+trace_ids = []
+ActiveAgents::Telemetry::RubyLLM.with_agent(
+  "EvaluationJudge", action: "score",
+  attributes: { "eval.run_id" => run_id, "eval.result_id" => result_id },
+  on_trace: ->(trace) { trace_ids << trace.trace_id },
+  synchronous: true
+) do
+  judge_chat.ask(prompt)
+end
+```
+
+The callback receives the completed trace before delivery, so an evaluation
+result can retain the exact trace ID. `synchronous: true` waits for the existing
+reporter's delivery attempt in this scope; it does not mutate the shared async
+configuration. Normal reporter error logging still applies: synchronous delivery
+does not turn telemetry failures into application exceptions. Context is restored
+after the block, including when it raises, and nested scopes use their own
+attributes. A callback error is logged by exception class without dropping the
+trace. Attribute redaction and content-capture settings continue to apply.
+
+Report publication and trace ingestion are separate operations. Persist each run
+and result ID in the evaluation report and attach the same IDs to its response and
+judge trace attributes. The application chooses whether to publish full report
+content; this API does not enable body capture or upload reports automatically.
