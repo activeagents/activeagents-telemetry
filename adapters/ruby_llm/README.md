@@ -110,14 +110,19 @@ ActiveAgents::Telemetry::RubyLLM.with_agent(
 end
 ```
 
-The callback receives the completed trace before delivery, so an evaluation
-result can retain the exact trace ID. `synchronous: true` waits for the existing
-reporter's delivery attempt in this scope; it does not mutate the shared async
+The callback receives each trace the reporter accepted, so an evaluation result
+can retain the exact trace ID that was sent. A trace dropped by `sample_rate` or
+by a disabled configuration is never announced. `synchronous: true` delivers in
+the calling thread for this scope only, through the same sampling and
+configuration checks as ordinary delivery; it does not mutate the shared async
 configuration. Normal reporter error logging still applies: synchronous delivery
-does not turn telemetry failures into application exceptions. Context is restored
-after the block, including when it raises, and nested scopes use their own
-attributes. A callback error is logged by exception class without dropping the
-trace. Attribute redaction and content-capture settings continue to apply.
+does not turn telemetry failures into application exceptions. A turn keeps the
+scope it started under, so a turn left open by a pending tool call and closed
+later by `flush!` still reports with this agent, attributes and callback. Context
+is restored after the block, including when it raises, and nested scopes use
+their own attributes. A callback error is logged by exception class without
+dropping the trace. Attribute redaction and content-capture settings continue to
+apply.
 
 Report publication and trace ingestion are separate operations. Persist each run
 and result ID in the evaluation report and attach the same IDs to its response and

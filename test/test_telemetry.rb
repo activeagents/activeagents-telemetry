@@ -151,8 +151,24 @@ class TestReporter < Minitest::Test
 
   def test_sampling_drops_traces
     reporter, captured = capturing_reporter(fresh_configuration(sample_rate: 0.0))
-    reporter.report(build_trace)
 
+    assert_equal false, reporter.report(build_trace)
+    assert_empty captured
+  end
+
+  def test_sync_delivers_in_the_calling_thread_and_reports_acceptance
+    reporter = ActiveAgents::Telemetry::Reporter.new(fresh_configuration(async: true))
+    threads = []
+    reporter.define_singleton_method(:deliver) { |_body| threads << Thread.current }
+
+    assert_equal true, reporter.report(build_trace, sync: true)
+    assert_equal [ Thread.current ], threads
+  end
+
+  def test_sync_still_honours_sampling
+    reporter, captured = capturing_reporter(fresh_configuration(sample_rate: 0.0))
+
+    assert_equal false, reporter.report(build_trace, sync: true)
     assert_empty captured
   end
 
@@ -162,6 +178,7 @@ class TestReporter < Minitest::Test
     reporter = ActiveAgents::Telemetry::Reporter.new(config)
     config.logger = Logger.new(File::NULL)
 
-    assert_nil reporter.report(build_trace)
+    # The failure is logged inside delivery; the trace still counts as accepted.
+    assert_equal true, reporter.report(build_trace)
   end
 end

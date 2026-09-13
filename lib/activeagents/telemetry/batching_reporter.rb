@@ -24,13 +24,16 @@ module ActiveAgents
         @shutdown = false
       end
 
-      # Enqueues a trace, flushing if the batch is full.
-      def report(traces)
-        return if @shutdown
+      # Enqueues a trace, flushing if the batch is full. `sync: true` flushes
+      # the buffer in the calling thread once the trace is enqueued, so a
+      # short-lived process can hand a trace over before it exits.
+      # @return [Boolean] whether any of the traces were accepted
+      def report(traces, sync: false)
+        return false if @shutdown
 
         accepted = normalize(traces).select { sample_trace? }
-        return if accepted.empty?
-        return unless configuration.enabled? && configuration.configured?
+        return false if accepted.empty?
+        return false unless configuration.enabled? && configuration.configured?
 
         batch = nil
         @mutex.synchronize do
@@ -38,8 +41,9 @@ module ActiveAgents
           batch = @buffer.slice!(0..) if @buffer.size >= configuration.batch_size
           start_flusher
         end
-        deliver_batch(batch) if batch
-        nil
+        deliver_batch(batch, blocking: sync) if batch
+        flush if sync
+        true
       end
 
       # Delivers everything buffered, blocking until done.

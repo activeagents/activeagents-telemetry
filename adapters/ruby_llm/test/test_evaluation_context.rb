@@ -39,14 +39,14 @@ class TestEvaluationContext < Minitest::Test
     assert_equal [ "inner", "outer", nil ], roots.map { |root| root["attributes"]["eval.run_id"] }
   end
 
-  def test_synchronous_scope_finishes_delivery_without_mutating_configuration
+  def test_synchronous_scope_delivers_in_the_calling_thread_without_mutating_configuration
     subscribe(async: true)
     caller_thread = Thread.current
     delivery_threads = []
-    original = Adapter.reporter.method(:report_now)
-    Adapter.reporter.define_singleton_method(:report_now) do |trace|
+    captured = posted
+    Adapter.reporter.define_singleton_method(:deliver) do |body|
       delivery_threads << Thread.current
-      original.call(trace)
+      captured << body
     end
 
     Adapter.with_agent("Support", synchronous: true) do
@@ -56,6 +56,38 @@ class TestEvaluationContext < Minitest::Test
 
     assert_equal [ caller_thread ], delivery_threads
     assert Adapter.configuration.async?
+  end
+
+  def test_synchronous_scope_still_honours_sampling_and_skips_the_callback
+    configuration = ActiveAgents::Telemetry::Configuration.new
+    configuration.sample_rate = 0.0
+    subscribe(configuration: configuration)
+    ids = []
+
+    Adapter.with_agent("Support", synchronous: true, on_trace: ->(trace) { ids << trace.trace_id }) do
+      instrument("chat.ruby_llm", chat_payload) { nil }
+    end
+
+    assert_empty posted
+    assert_empty ids
+  end
+
+  def test_a_turn_keeps_the_scope_it_started_under_when_flushed_later
+    ids = []
+    pending = chat_payload(tool_call: true)
+    Adapter.with_agent("Judge", action: "score", attributes: { "eval.run_id" => "run-1" },
+      on_trace: ->(trace) { ids << trace.trace_id }) do
+      instrument("chat.ruby_llm", pending) { nil }
+    end
+    assert_empty posted, "a turn with a pending tool call stays open"
+
+    Adapter.flush!(pending)
+
+    trace = traces.fetch(0)
+    root = spans_of(trace, "root").fetch(0)
+    assert_equal "Judge.score", root["name"]
+    assert_equal "run-1", root["attributes"]["eval.run_id"]
+    assert_equal [ trace["trace_id"] ], ids
   end
 
   def test_callback_failure_does_not_discard_the_trace_or_expose_its_message
