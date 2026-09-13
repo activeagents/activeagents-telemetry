@@ -92,3 +92,44 @@ an explicit `flush!`.
 ```bash
 bundle exec rake test
 ```
+
+## Correlating evaluation traces
+
+Use a separate identity for judge calls and attach stable evaluation identifiers
+without changing the application's default agent resolver:
+
+```ruby
+trace_ids = []
+ActiveAgents::Telemetry::RubyLLM.with_agent(
+  "EvaluationJudge", action: "score",
+  attributes: { "eval.run_id" => run_id, "eval.result_id" => result_id },
+  on_trace: ->(trace) { trace_ids << trace.trace_id },
+  synchronous: true
+) do
+  judge_chat.ask(prompt)
+end
+```
+
+The callback receives each trace the reporter accepted for delivery, so an
+evaluation result can retain the trace ID of that delivery attempt. Acceptance is
+not ingestion: the trace passed the enabled, configured and sampling checks, but
+a delivery that then fails is logged by the reporter rather than announced here,
+and an asynchronous delivery can outlive a process that exits right away. A trace
+dropped by `sample_rate` or by a disabled configuration is never announced.
+`synchronous: true` delivers in the calling thread for this scope only, through
+the same sampling and configuration checks as ordinary delivery; it does not
+mutate the shared async configuration. Normal reporter error logging still
+applies: synchronous delivery does not turn telemetry failures into application
+exceptions. A turn keeps the scope it started under, so a turn left open by a
+pending tool call and closed later by `flush!` still reports with this agent,
+attributes and callback, and a turn that started outside any scope never adopts
+one. Context
+is restored after the block, including when it raises, and nested scopes use
+their own attributes. A callback error is logged by exception class without
+dropping the trace. Attribute redaction and content-capture settings continue to
+apply.
+
+Report publication and trace ingestion are separate operations. Persist each run
+and result ID in the evaluation report and attach the same IDs to its response and
+judge trace attributes. The application chooses whether to publish full report
+content; this API does not enable body capture or upload reports automatically.

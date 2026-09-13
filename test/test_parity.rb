@@ -81,7 +81,7 @@ class TestConfigurationParity < Minitest::Test
     config = ActiveAgents::Telemetry::Configuration.new
     refute config.configured?
 
-    config.local_store = ->(_trace, _sdk) {}
+    config.local_store = ->(_trace, _sdk) { }
     assert config.configured?
   end
 end
@@ -163,6 +163,39 @@ class TestBatchingReporter < Minitest::Test
     reporter.report(build_trace)
     assert_equal 1, captured.size
     assert_equal 3, captured.first["traces"].size
+  end
+
+  def test_sync_delivers_its_own_traces_in_the_calling_thread_and_leaves_the_buffer_alone
+    reporter = ActiveAgents::Telemetry::BatchingReporter.new(fresh_configuration(async: true))
+    deliveries = []
+    reporter.define_singleton_method(:deliver) { |body| deliveries << [ Thread.current, body["traces"].size ] }
+
+    reporter.report(build_trace)
+    assert_empty deliveries, "an ordinary trace stays buffered"
+
+    assert_equal true, reporter.report(build_trace, sync: true)
+    assert_equal [ [ Thread.current, 1 ] ], deliveries, "only the synchronous call's trace went out, in this thread"
+
+    reporter.flush
+    assert_equal 2, deliveries.size, "the buffered trace was left for the next flush"
+    assert_equal 1, deliveries.last[1]
+    reporter.shutdown
+  end
+
+  def test_sync_reports_a_trace_it_could_not_serialize_as_not_accepted
+    reporter, captured = batching_reporter(fresh_configuration(logger: Logger.new(File::NULL)))
+    trace = build_trace
+    trace.define_singleton_method(:to_h) { raise "unserializable" }
+
+    assert_equal false, reporter.report(trace, sync: true)
+    assert_empty captured
+  end
+
+  def test_sync_still_honours_sampling
+    reporter, captured = batching_reporter(fresh_configuration(sample_rate: 0.0))
+
+    assert_equal false, reporter.report(build_trace, sync: true)
+    assert_empty captured
   end
 
   def test_flush_delivers_a_partial_batch

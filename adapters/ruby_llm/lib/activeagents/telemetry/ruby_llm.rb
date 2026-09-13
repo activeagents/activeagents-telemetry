@@ -43,7 +43,7 @@ module ActiveAgents
 
       DEFAULT_AGENT = { name: "RubyLLM::Chat", action: "chat" }.freeze
 
-      State = Struct.new(:depth, :started_at, :tool_spans, :rounds, :tokens, :chat_key)
+      State = Struct.new(:depth, :started_at, :tool_spans, :rounds, :tokens, :chat_key, :agent)
 
       class << self
         # Subscribes to RubyLLM's instrumentation.
@@ -91,17 +91,30 @@ module ActiveAgents
 
         attr_writer :reporter
 
-        # Attributes traces inside the block to a named agent/action.
-        def with_agent(name, action: "chat")
+        # Attributes traces inside the block to a named agent/action. Correlation
+        # attributes and the callback apply to this scope only. Short-lived
+        # evaluation commands can deliver synchronously without changing the
+        # application's shared reporter configuration.
+        #
+        # A turn keeps the scope it started under, so a turn left open by a
+        # pending tool call and closed later by `flush!` still reports as this
+        # agent, and a turn that started outside any scope never adopts one.
+        # `on_trace` runs only for a trace the reporter accepted, which means
+        # it passed the enabled, configured and sampling checks: a delivery
+        # that then fails is logged by the reporter, not announced here.
+        def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: false)
           previous = Thread.current[AGENT_KEY]
-          Thread.current[AGENT_KEY] = { name: name, action: action }
+          Thread.current[AGENT_KEY] = {
+            name: name, action: action, attributes: attributes.to_h.transform_keys(&:to_s),
+            on_trace: on_trace, synchronous: synchronous
+          }
           yield
         ensure
           Thread.current[AGENT_KEY] = previous
         end
 
         def state
-          Thread.current[STATE_KEY] ||= State.new(0, nil, [], 0, Span::ZERO_TOKENS.dup, nil)
+          Thread.current[STATE_KEY] ||= State.new(0, nil, [], 0, Span::ZERO_TOKENS.dup, nil, nil)
         end
 
         def clear_state
@@ -126,7 +139,13 @@ module ActiveAgents
             flush! if turn.rounds.positive? && (turn.chat_key != chat_key || turn_expired?(turn))
             turn = state
             turn.chat_key = chat_key
-            turn.started_at ||= Time.now
+            if turn.started_at.nil?
+              turn.started_at = Time.now
+              # Captured once, on the turn's first round, whether or not a scope
+              # is active: a turn that started unscoped stays unscoped even when
+              # a later scope's chat is what flushes it.
+              turn.agent = Thread.current[AGENT_KEY]
+            end
           end
           turn.depth += 1
         end
@@ -161,7 +180,7 @@ module ActiveAgents
         private
 
         def report_turn(payload, turn)
-          agent = Thread.current[AGENT_KEY] || resolve_agent(payload) || DEFAULT_AGENT
+          agent = turn.agent || resolve_agent(payload) || DEFAULT_AGENT
           started_at = turn.started_at || Time.now
           finished_at = Time.now
           error = payload[:exception_object]
@@ -172,12 +191,12 @@ module ActiveAgents
             resource_attributes: configuration.resource_attributes
           )
 
-          root_attributes = {
+          root_attributes = (agent[:attributes] || {}).merge(
             "agent.class" => agent[:name],
             "agent.action" => agent[:action],
             "agent.provider" => payload[:provider].to_s,
             "agent.model" => payload[:model].to_s
-          }
+          )
           root_attributes.merge!(conversation_attributes(payload)) if configuration.capture_bodies?
 
           root = trace.span(
@@ -206,7 +225,14 @@ module ActiveAgents
             trace.add_span(tool_span)
           end
 
-          reporter.report(trace)
+          accepted = agent[:synchronous] ? reporter.report(trace, sync: true) : reporter.report(trace)
+          notify_trace(agent[:on_trace], trace) if accepted
+        end
+
+        def notify_trace(callback, trace)
+          callback&.call(trace)
+        rescue StandardError => e
+          warn "[#{SDK_NAME}] on_trace failed: #{e.class}"
         end
 
         def turn_expired?(turn)

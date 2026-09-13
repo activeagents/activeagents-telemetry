@@ -1,6 +1,34 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-09-12
+
+### Added
+
+- `RubyLLM.with_agent` takes `attributes:`, `on_trace:` and `synchronous:`.
+  `attributes` are merged onto the root span of every trace recorded in the
+  block, with the `agent.*` identity keys taking precedence, so an evaluation
+  can stamp its run and result identifiers on the traces it causes. `on_trace`
+  receives each trace the reporter accepted for delivery, so the caller can
+  keep the `trace_id` of that delivery attempt; a trace dropped by
+  `sample_rate` or a disabled configuration is never announced. Acceptance is
+  not ingestion: a delivery that fails afterwards is logged by the reporter,
+  not surfaced to the callback. `synchronous: true` delivers in
+  the calling thread for that scope only, through the same sampling and
+  configuration checks as ordinary delivery; the shared asynchronous
+  configuration is untouched, and a delivery failure follows the reporter's
+  existing logging policy rather than raising. A turn keeps the scope it
+  started under, so a turn left open by a pending tool call and closed later
+  by `flush!` still reports with that scope's agent, attributes and callback,
+  and a turn that started outside any scope never adopts a later one.
+  Nested scopes restore the previous context, including when the block
+  raises. A callback that raises is logged by exception class and the trace
+  is still delivered. (#5)
+- `Reporter#report` takes `sync: true` to deliver in the calling thread for
+  that call only, keeping the enabled, configured and sampling checks that
+  `report_now` skips, and returns whether the traces were accepted.
+  `BatchingReporter#report` delivers that call's traces in the calling
+  thread when asked the same, leaving its buffer on its own schedule. The
+  RubyLLM adapter now requires core `~> 0.3` for it.
 
 ### Fixed
 
