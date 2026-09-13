@@ -98,9 +98,10 @@ module ActiveAgents
         #
         # A turn keeps the scope it started under, so a turn left open by a
         # pending tool call and closed later by `flush!` still reports as this
-        # agent. `on_trace` runs only for a trace the reporter accepted: one
-        # dropped by `sample_rate` or a disabled configuration is never
-        # announced.
+        # agent, and a turn that started outside any scope never adopts one.
+        # `on_trace` runs only for a trace the reporter accepted, which means
+        # it passed the enabled, configured and sampling checks: a delivery
+        # that then fails is logged by the reporter, not announced here.
         def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: false)
           previous = Thread.current[AGENT_KEY]
           Thread.current[AGENT_KEY] = {
@@ -138,8 +139,13 @@ module ActiveAgents
             flush! if turn.rounds.positive? && (turn.chat_key != chat_key || turn_expired?(turn))
             turn = state
             turn.chat_key = chat_key
-            turn.started_at ||= Time.now
-            turn.agent ||= Thread.current[AGENT_KEY]
+            if turn.started_at.nil?
+              turn.started_at = Time.now
+              # Captured once, on the turn's first round, whether or not a scope
+              # is active: a turn that started unscoped stays unscoped even when
+              # a later scope's chat is what flushes it.
+              turn.agent = Thread.current[AGENT_KEY]
+            end
           end
           turn.depth += 1
         end
@@ -174,7 +180,7 @@ module ActiveAgents
         private
 
         def report_turn(payload, turn)
-          agent = turn.agent || Thread.current[AGENT_KEY] || resolve_agent(payload) || DEFAULT_AGENT
+          agent = turn.agent || resolve_agent(payload) || DEFAULT_AGENT
           started_at = turn.started_at || Time.now
           finished_at = Time.now
           error = payload[:exception_object]

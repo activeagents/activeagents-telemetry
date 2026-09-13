@@ -72,6 +72,22 @@ class TestEvaluationContext < Minitest::Test
     assert_empty ids
   end
 
+  def test_an_unscoped_turn_never_adopts_the_scope_whose_chat_flushes_it
+    ids = []
+    instrument("chat.ruby_llm", chat_payload(tool_call: true)) { nil }
+    assert_empty posted, "the unscoped turn stays open on its pending tool call"
+
+    Adapter.with_agent("Judge", action: "score", attributes: { "eval.run_id" => "run-1" },
+      on_trace: ->(trace) { ids << trace.trace_id }, synchronous: true) do
+      instrument("chat.ruby_llm", chat_payload(chat: Object.new)) { nil }
+    end
+
+    roots = traces.map { |trace| spans_of(trace, "root").first }
+    assert_equal [ "RubyLLM::Chat.chat", "Judge.score" ], roots.map { |root| root["name"] }
+    assert_equal [ nil, "run-1" ], roots.map { |root| root["attributes"]["eval.run_id"] }
+    assert_equal [ traces.fetch(1)["trace_id"] ], ids, "only the judge's own trace reaches its callback"
+  end
+
   def test_a_turn_keeps_the_scope_it_started_under_when_flushed_later
     ids = []
     pending = chat_payload(tool_call: true)

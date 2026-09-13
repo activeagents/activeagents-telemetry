@@ -110,15 +110,20 @@ ActiveAgents::Telemetry::RubyLLM.with_agent(
 end
 ```
 
-The callback receives each trace the reporter accepted, so an evaluation result
-can retain the exact trace ID that was sent. A trace dropped by `sample_rate` or
-by a disabled configuration is never announced. `synchronous: true` delivers in
-the calling thread for this scope only, through the same sampling and
-configuration checks as ordinary delivery; it does not mutate the shared async
-configuration. Normal reporter error logging still applies: synchronous delivery
-does not turn telemetry failures into application exceptions. A turn keeps the
-scope it started under, so a turn left open by a pending tool call and closed
-later by `flush!` still reports with this agent, attributes and callback. Context
+The callback receives each trace the reporter accepted for delivery, so an
+evaluation result can retain the trace ID of that delivery attempt. Acceptance is
+not ingestion: the trace passed the enabled, configured and sampling checks, but
+a delivery that then fails is logged by the reporter rather than announced here,
+and an asynchronous delivery can outlive a process that exits right away. A trace
+dropped by `sample_rate` or by a disabled configuration is never announced.
+`synchronous: true` delivers in the calling thread for this scope only, through
+the same sampling and configuration checks as ordinary delivery; it does not
+mutate the shared async configuration. Normal reporter error logging still
+applies: synchronous delivery does not turn telemetry failures into application
+exceptions. A turn keeps the scope it started under, so a turn left open by a
+pending tool call and closed later by `flush!` still reports with this agent,
+attributes and callback, and a turn that started outside any scope never adopts
+one. Context
 is restored after the block, including when it raises, and nested scopes use
 their own attributes. A callback error is logged by exception class without
 dropping the trace. Attribute redaction and content-capture settings continue to
