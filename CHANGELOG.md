@@ -1,6 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-09-12
+
+### Added
+
+- `RubyLLM.with_agent` takes `attributes:`, `on_trace:` and `synchronous:`.
+  `attributes` are merged onto the root span of every trace recorded in the
+  block, with the `agent.*` identity keys taking precedence, so an evaluation
+  can stamp its run and result identifiers on the traces it causes. `on_trace`
+  receives each completed trace before delivery, so the caller can keep the
+  `trace_id` the collector will store. `synchronous: true` delivers through
+  `Reporter#report_now` in the calling thread for that scope only; the shared
+  asynchronous configuration is untouched, and a delivery failure follows the
+  reporter's existing logging policy rather than raising. Nested scopes
+  restore the previous context, including when the block raises. A callback
+  that raises is logged by exception class and the trace is still delivered.
+  (#5)
 
 ### Fixed
 
