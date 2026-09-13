@@ -165,13 +165,20 @@ class TestBatchingReporter < Minitest::Test
     assert_equal 3, captured.first["traces"].size
   end
 
-  def test_sync_flushes_the_buffer_in_the_calling_thread
+  def test_sync_delivers_its_own_traces_in_the_calling_thread_and_leaves_the_buffer_alone
     reporter = ActiveAgents::Telemetry::BatchingReporter.new(fresh_configuration(async: true))
-    threads = []
-    reporter.define_singleton_method(:deliver) { |_body| threads << Thread.current }
+    deliveries = []
+    reporter.define_singleton_method(:deliver) { |body| deliveries << [ Thread.current, body["traces"].size ] }
+
+    reporter.report(build_trace)
+    assert_empty deliveries, "an ordinary trace stays buffered"
 
     assert_equal true, reporter.report(build_trace, sync: true)
-    assert_equal [ Thread.current ], threads
+    assert_equal [ [ Thread.current, 1 ] ], deliveries, "only the synchronous call's trace went out, in this thread"
+
+    reporter.flush
+    assert_equal 2, deliveries.size, "the buffered trace was left for the next flush"
+    assert_equal 1, deliveries.last[1]
     reporter.shutdown
   end
 

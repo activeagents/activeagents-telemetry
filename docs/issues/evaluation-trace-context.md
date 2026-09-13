@@ -10,7 +10,8 @@ callback and a synchronous delivery option. Existing calls remain compatible.
 Nested/raising scopes restore their previous context; callback failures do not
 drop traces or log callback message content. Body capture remains opt-in.
 
-Validation: core 34 tests / 82 assertions and RubyLLM adapter 17 tests / 57
+Validation: core 38 tests / 93 assertions and RubyLLM adapter 20 tests / 71
 assertions pass on Ruby 4.0.2. New tests cover actual trace-ID correlation, judge
-identity, nested context restoration, synchronous delivery, and callback failure.
+identity, nested context restoration, synchronous delivery under sampling, a
+turn keeping the scope it started under, and callback failure.
 Raw logs live in gitignored `tmp/`.

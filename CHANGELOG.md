@@ -26,8 +26,9 @@
 - `Reporter#report` takes `sync: true` to deliver in the calling thread for
   that call only, keeping the enabled, configured and sampling checks that
   `report_now` skips, and returns whether the traces were accepted.
-  `BatchingReporter#report` flushes its buffer in the calling thread when
-  asked the same. The RubyLLM adapter now requires core `~> 0.3` for it.
+  `BatchingReporter#report` delivers that call's traces in the calling
+  thread when asked the same, leaving its buffer on its own schedule. The
+  RubyLLM adapter now requires core `~> 0.3` for it.
 
 ### Fixed
 
