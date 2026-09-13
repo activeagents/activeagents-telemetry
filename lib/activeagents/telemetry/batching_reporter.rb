@@ -24,9 +24,10 @@ module ActiveAgents
         @shutdown = false
       end
 
-      # Enqueues a trace, flushing if the batch is full. `sync: true` flushes
-      # the buffer in the calling thread once the trace is enqueued, so a
-      # short-lived process can hand a trace over before it exits.
+      # Enqueues a trace, flushing if the batch is full. `sync: true` skips the
+      # buffer: that call's traces are delivered in the calling thread before
+      # it returns, so a short-lived process can hand a trace over before it
+      # exits, and whatever the buffer already holds stays on its own schedule.
       # @return [Boolean] whether any of the traces were accepted
       def report(traces, sync: false)
         return false if @shutdown
@@ -35,14 +36,18 @@ module ActiveAgents
         return false if accepted.empty?
         return false unless configuration.enabled? && configuration.configured?
 
+        if sync
+          deliver_batch(accepted, blocking: true)
+          return true
+        end
+
         batch = nil
         @mutex.synchronize do
           @buffer.concat(accepted)
           batch = @buffer.slice!(0..) if @buffer.size >= configuration.batch_size
           start_flusher
         end
-        deliver_batch(batch, blocking: sync) if batch
-        flush if sync
+        deliver_batch(batch) if batch
         true
       end
 
