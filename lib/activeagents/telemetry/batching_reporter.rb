@@ -37,7 +37,13 @@ module ActiveAgents
         return false unless configuration.enabled? && configuration.configured?
 
         if sync
-          deliver_batch(accepted, blocking: true)
+          body = begin
+            payload_for(accepted)
+          rescue StandardError => e
+            log("failed to build trace payload: #{e.class}: #{e.message}")
+            return false
+          end
+          deliver(body)
           return true
         end
 

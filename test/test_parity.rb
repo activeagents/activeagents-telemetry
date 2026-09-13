@@ -182,6 +182,15 @@ class TestBatchingReporter < Minitest::Test
     reporter.shutdown
   end
 
+  def test_sync_reports_a_trace_it_could_not_serialize_as_not_accepted
+    reporter, captured = batching_reporter(fresh_configuration(logger: Logger.new(File::NULL)))
+    trace = build_trace
+    trace.define_singleton_method(:to_h) { raise "unserializable" }
+
+    assert_equal false, reporter.report(trace, sync: true)
+    assert_empty captured
+  end
+
   def test_sync_still_honours_sampling
     reporter, captured = batching_reporter(fresh_configuration(sample_rate: 0.0))
 
