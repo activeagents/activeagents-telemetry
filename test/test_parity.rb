@@ -81,7 +81,7 @@ class TestConfigurationParity < Minitest::Test
     config = ActiveAgents::Telemetry::Configuration.new
     refute config.configured?
 
-    config.local_store = ->(_trace, _sdk) {}
+    config.local_store = ->(_trace, _sdk) { }
     assert config.configured?
   end
 end
@@ -163,6 +163,23 @@ class TestBatchingReporter < Minitest::Test
     reporter.report(build_trace)
     assert_equal 1, captured.size
     assert_equal 3, captured.first["traces"].size
+  end
+
+  def test_sync_flushes_the_buffer_in_the_calling_thread
+    reporter = ActiveAgents::Telemetry::BatchingReporter.new(fresh_configuration(async: true))
+    threads = []
+    reporter.define_singleton_method(:deliver) { |_body| threads << Thread.current }
+
+    assert_equal true, reporter.report(build_trace, sync: true)
+    assert_equal [ Thread.current ], threads
+    reporter.shutdown
+  end
+
+  def test_sync_still_honours_sampling
+    reporter, captured = batching_reporter(fresh_configuration(sample_rate: 0.0))
+
+    assert_equal false, reporter.report(build_trace, sync: true)
+    assert_empty captured
   end
 
   def test_flush_delivers_a_partial_batch

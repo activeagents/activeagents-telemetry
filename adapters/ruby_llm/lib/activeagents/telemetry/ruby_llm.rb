@@ -43,7 +43,7 @@ module ActiveAgents
 
       DEFAULT_AGENT = { name: "RubyLLM::Chat", action: "chat" }.freeze
 
-      State = Struct.new(:depth, :started_at, :tool_spans, :rounds, :tokens, :chat_key)
+      State = Struct.new(:depth, :started_at, :tool_spans, :rounds, :tokens, :chat_key, :agent)
 
       class << self
         # Subscribes to RubyLLM's instrumentation.
@@ -95,6 +95,12 @@ module ActiveAgents
         # attributes and the callback apply to this scope only. Short-lived
         # evaluation commands can deliver synchronously without changing the
         # application's shared reporter configuration.
+        #
+        # A turn keeps the scope it started under, so a turn left open by a
+        # pending tool call and closed later by `flush!` still reports as this
+        # agent. `on_trace` runs only for a trace the reporter accepted: one
+        # dropped by `sample_rate` or a disabled configuration is never
+        # announced.
         def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: false)
           previous = Thread.current[AGENT_KEY]
           Thread.current[AGENT_KEY] = {
@@ -107,7 +113,7 @@ module ActiveAgents
         end
 
         def state
-          Thread.current[STATE_KEY] ||= State.new(0, nil, [], 0, Span::ZERO_TOKENS.dup, nil)
+          Thread.current[STATE_KEY] ||= State.new(0, nil, [], 0, Span::ZERO_TOKENS.dup, nil, nil)
         end
 
         def clear_state
@@ -133,6 +139,7 @@ module ActiveAgents
             turn = state
             turn.chat_key = chat_key
             turn.started_at ||= Time.now
+            turn.agent ||= Thread.current[AGENT_KEY]
           end
           turn.depth += 1
         end
@@ -167,7 +174,7 @@ module ActiveAgents
         private
 
         def report_turn(payload, turn)
-          agent = Thread.current[AGENT_KEY] || resolve_agent(payload) || DEFAULT_AGENT
+          agent = turn.agent || Thread.current[AGENT_KEY] || resolve_agent(payload) || DEFAULT_AGENT
           started_at = turn.started_at || Time.now
           finished_at = Time.now
           error = payload[:exception_object]
@@ -212,8 +219,8 @@ module ActiveAgents
             trace.add_span(tool_span)
           end
 
-          notify_trace(agent[:on_trace], trace)
-          agent[:synchronous] ? reporter.report_now(trace) : reporter.report(trace)
+          accepted = agent[:synchronous] ? reporter.report(trace, sync: true) : reporter.report(trace)
+          notify_trace(agent[:on_trace], trace) if accepted
         end
 
         def notify_trace(callback, trace)

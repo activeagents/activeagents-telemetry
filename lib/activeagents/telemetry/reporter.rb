@@ -35,19 +35,29 @@ module ActiveAgents
 
       # @param traces [Trace, Hash, Array<Trace, Hash>] traces to deliver —
       #   Trace objects or already-serialized trace hashes
-      # @return [void]
-      def report(traces)
+      # @param sync [Boolean] deliver in the calling thread for this call
+      #   only; every other call keeps the configured async behaviour. The
+      #   enabled, configured and sampling checks still apply, unlike
+      #   #report_now.
+      # @return [Boolean] whether the traces were accepted for delivery. A
+      #   delivery failure is logged rather than surfaced here, so true means
+      #   the traces passed the enabled, configured and sampling checks.
+      def report(traces, sync: false)
         traces = normalize(traces)
-        return if traces.empty?
-        return unless configuration.enabled? && configuration.configured?
-        return unless sample_trace?
+        return false if traces.empty?
+        return false unless configuration.enabled? && configuration.configured?
+        return false unless sample_trace?
 
         body = payload_for(traces)
-        configuration.async? ? Thread.new { deliver(body) } : deliver(body)
-        nil
+        if sync || !configuration.async?
+          deliver(body)
+        else
+          Thread.new { deliver(body) }
+        end
+        true
       rescue StandardError => e
         log("failed to build trace payload: #{e.class}: #{e.message}")
-        nil
+        false
       end
 
       # Blocking delivery, for tests and for at-exit flushes.
