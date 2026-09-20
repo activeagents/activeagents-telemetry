@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.1] - 2026-09-20
+
+### Fixed
+
+- The RubyLLM adapter reads token counts from a RubyLLM 2.x turn. 2.0 moved
+  the per-message readers (`input_tokens`, `output_tokens`, `thinking_tokens`)
+  to `message.tokens` and puts the round's `Tokens` on the `chat.ruby_llm`
+  payload; the adapter only knew the 1.x readers, so every 2.x trace reported
+  0 tokens while its spans, timings and errors were correct. The payload's
+  `tokens` is read first, then the round's messages with either generation's
+  readers, so 1.x traces are unchanged.
+
+The core gem is republished at 0.3.1 with no changes, so the two gems stay on
+one version.
+
+
 ## [0.3.0] - 2026-09-12
 
 ### Added

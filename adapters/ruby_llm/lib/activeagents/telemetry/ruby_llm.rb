@@ -43,6 +43,9 @@ module ActiveAgents
 
       DEFAULT_AGENT = { name: "RubyLLM::Chat", action: "chat" }.freeze
 
+      # Span token keys and the reader that answers each on a RubyLLM 2.x +Tokens+.
+      TOKEN_READERS = { "input" => :input, "output" => :output, "thinking" => :thinking }.freeze
+
       State = Struct.new(:depth, :started_at, :tool_spans, :rounds, :tokens, :chat_key, :agent)
 
       class << self
@@ -306,22 +309,39 @@ module ActiveAgents
           text.to_s[0, CONTENT_LIMIT]
         end
 
+        # Tokens for one round. RubyLLM 2.x puts the round's +Tokens+ on the
+        # payload and moves the per-message readers to +message.tokens+; 1.x
+        # has +input_tokens+ and friends on each assistant message and nothing
+        # on the payload. The payload is read first, then the messages the
+        # round added, with either generation's readers.
         def token_totals(payload)
-          initial_count = Array(payload[:input_messages]).size
-          new_messages = Array(payload[:messages_after])[initial_count..] || []
-          assistant_messages = new_messages.select { |message| message.respond_to?(:role) && message.role.to_s == "assistant" }
-
-          tokens = {
-            "input" => sum_tokens(assistant_messages, :input_tokens),
-            "output" => sum_tokens(assistant_messages, :output_tokens),
-            "thinking" => sum_tokens(assistant_messages, :thinking_tokens)
-          }
+          tokens = payload_tokens(payload[:tokens]) || message_tokens(payload)
           tokens["total"] = tokens.values.sum
           tokens
         end
 
-        def sum_tokens(messages, method_name)
-          messages.sum { |message| message.respond_to?(method_name) ? message.public_send(method_name).to_i : 0 }
+        def payload_tokens(tokens)
+          return unless TOKEN_READERS.values.all? { |reader| tokens.respond_to?(reader) }
+
+          TOKEN_READERS.to_h { |key, reader| [ key, tokens.public_send(reader).to_i ] }
+        end
+
+        def message_tokens(payload)
+          initial_count = Array(payload[:input_messages]).size
+          new_messages = Array(payload[:messages_after])[initial_count..] || []
+          assistant_messages = new_messages.select { |message| message.respond_to?(:role) && message.role.to_s == "assistant" }
+
+          TOKEN_READERS.to_h { |key, reader| [ key, assistant_messages.sum { |message| message_token_count(message, key, reader) } ] }
+        end
+
+        # A 1.x message answers +input_tokens+; a 2.x message answers
+        # +tokens.input+.
+        def message_token_count(message, key, reader)
+          legacy_reader = :"#{key}_tokens"
+          return message.public_send(legacy_reader).to_i if message.respond_to?(legacy_reader)
+
+          tokens = message.tokens if message.respond_to?(:tokens)
+          tokens.respond_to?(reader) ? tokens.public_send(reader).to_i : 0
         end
       end
 
