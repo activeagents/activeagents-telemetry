@@ -144,6 +144,49 @@ class TestRubyLLMAdapter < Minitest::Test
     ActiveAgents::Telemetry.reset!
   end
 
+  # RubyLLM 2.x: the round's Tokens ride the payload; messages answer #tokens, not #input_tokens.
+  Tokens2 = Struct.new(:input, :output, :thinking, keyword_init: true)
+  Msg2 = Struct.new(:role, :tokens)
+
+  def test_reads_a_2x_rounds_tokens_from_the_payload
+    reply = Msg2.new("assistant", Tokens2.new(input: 10, output: 5, thinking: 2))
+    payload = chat_payload(input_messages: [ Msg2.new("user", nil) ], tokens: Tokens2.new(input: 10, output: 5, thinking: 2))
+
+    instrument("chat.ruby_llm", payload) { |p| p[:messages_after] = [ *payload[:input_messages], reply ]; p[:tool_call] = false }
+
+    assert_equal({ "input" => 10, "output" => 5, "thinking" => 2, "total" => 17 }, spans_of(traces.last, "llm").first["tokens"])
+  end
+
+  def test_sums_2x_payload_tokens_across_sibling_rounds
+    chat = Object.new
+    first = chat_payload(chat: chat, tokens: Tokens2.new(input: 10, output: 5, thinking: 0))
+    instrument("chat.ruby_llm", first) { |p| p[:messages_after] = [ *first[:input_messages], Msg2.new("assistant", first[:tokens]) ]; p[:tool_call] = true }
+    second = chat_payload(chat: chat, tokens: Tokens2.new(input: 20, output: 7, thinking: 0))
+    instrument("chat.ruby_llm", second) { |p| p[:messages_after] = [ *second[:input_messages], Msg2.new("assistant", second[:tokens]) ]; p[:tool_call] = false }
+
+    assert_equal 1, traces.size
+    llm_span = spans_of(traces.last, "llm").first
+    assert_equal 2, llm_span["attributes"]["llm.rounds"]
+    assert_equal({ "input" => 30, "output" => 12, "thinking" => 0, "total" => 42 }, llm_span["tokens"])
+  end
+
+  def test_reads_2x_message_tokens_when_the_payload_carries_none
+    reply = Msg2.new("assistant", Tokens2.new(input: 10, output: 5, thinking: 0))
+    payload = chat_payload(input_messages: [ Msg2.new("user", nil) ])
+
+    instrument("chat.ruby_llm", payload) { |p| p[:messages_after] = [ *payload[:input_messages], reply ]; p[:tool_call] = false }
+
+    assert_equal({ "input" => 10, "output" => 5, "thinking" => 0, "total" => 15 }, spans_of(traces.last, "llm").first["tokens"])
+  end
+
+  def test_an_empty_2x_tokens_object_reports_zero_rather_than_raising
+    payload = chat_payload(tokens: Tokens2.new(input: nil, output: nil, thinking: nil))
+
+    instrument("chat.ruby_llm", payload) { |p| p[:messages_after] = payload[:input_messages]; p[:tool_call] = false }
+
+    assert_equal({ "input" => 0, "output" => 0, "thinking" => 0, "total" => 0 }, spans_of(traces.last, "llm").first["tokens"])
+  end
+
   ContentMsg = Struct.new(:role, :content, :input_tokens, :output_tokens, :thinking_tokens)
 
   def test_does_not_capture_content_by_default
