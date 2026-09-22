@@ -105,15 +105,69 @@ module ActiveAgents
         # `on_trace` runs only for a trace the reporter accepted, which means
         # it passed the enabled, configured and sampling checks: a delivery
         # that then fails is logged by the reporter, not announced here.
-        def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: false)
+        #
+        # Scopes compose. Inside an enclosing scope, a nested call merges its
+        # `attributes` onto the enclosing ones (a nested key wins on
+        # collision) and inherits `on_trace` and `synchronous` unless it
+        # passes its own; `synchronous: nil`, the default, means "inherit,
+        # else false", so an explicit `synchronous: false` still overrides an
+        # inherited `true`. Without `pin`, the nested scope replaces `name`
+        # and `action`, so a call site that names its own agent keeps doing
+        # so under an evaluation's scope. A scope opened with `pin: true` owns
+        # the turn's identity: while it is active a nested `with_agent` may
+        # only add attributes, and the pinned scope's `name`, `action`,
+        # `on_trace` and `synchronous` stay in force whatever the nested call
+        # passes. An evaluation replay pins its scope so the code under test,
+        # which opens its own scope around the actual `chat.ask`, cannot
+        # detach the trace from the evaluation's attributes, callback and
+        # synchronous delivery. The previous scope is restored on exit,
+        # including when the block raises.
+        #
+        # @param synchronous [Boolean, nil] nil inherits the enclosing scope's
+        #   setting, or false at the top level.
+        # @param pin [Boolean] whether this scope keeps its identity, callback
+        #   and delivery mode against nested scopes.
+        def with_agent(name, action: "chat", attributes: {}, on_trace: nil, synchronous: nil, pin: false)
           previous = Thread.current[AGENT_KEY]
-          Thread.current[AGENT_KEY] = {
-            name: name, action: action, attributes: attributes.to_h.transform_keys(&:to_s),
-            on_trace: on_trace, synchronous: synchronous
-          }
+          Thread.current[AGENT_KEY] = compose_scope(
+            previous, name: name, action: action, attributes: attributes,
+            on_trace: on_trace, synchronous: synchronous, pin: pin
+          )
           yield
         ensure
           Thread.current[AGENT_KEY] = previous
+        end
+
+        # A `tracer:` for `ActiveAgent::Evals::Correlation` (activeagent >=
+        # 1.6.3), which wraps each evaluation replay in
+        # `tracer.call(name, action:, attributes:, on_trace:) { ... }` and
+        # expects `on_trace` to receive something answering `#trace_id`. The
+        # returned lambda opens a pinned, synchronous `with_agent` scope with
+        # exactly those arguments, so the replayed code's own `with_agent`
+        # around `chat.ask` can add attributes but cannot replace the
+        # evaluation's identity, drop its `on_trace` or turn delivery
+        # asynchronous, and the trace id the callback receives is the one
+        # the reporter delivered before the replay returns. The block's value
+        # is returned. There is no dependency on activeagent: the contract is
+        # only the lambda's signature.
+        #
+        #   ActiveAgent::Evals::Correlation.new(
+        #     agent_name: "SupportAgent",
+        #     tracer: ActiveAgents::Telemetry::RubyLLM.correlation_tracer
+        #   )
+        #
+        # @param synchronous [Boolean] whether the scope delivers in the
+        #   calling thread; true keeps the trace id available when the
+        #   replay returns and before a short-lived process exits.
+        # @param pin [Boolean] whether nested scopes may only add attributes.
+        # @return [Proc] `->(name, action:, attributes:, on_trace:, &block)`
+        def correlation_tracer(synchronous: true, pin: true)
+          lambda do |name, action: "chat", attributes: {}, on_trace: nil, &block|
+            with_agent(
+              name, action: action, attributes: attributes, on_trace: on_trace,
+              synchronous: synchronous, pin: pin, &block
+            )
+          end
         end
 
         def state
@@ -181,6 +235,27 @@ module ActiveAgents
         end
 
         private
+
+        # The scope a nested `with_agent` installs, given the enclosing one.
+        # Attributes always merge with the nested keys winning; the rest
+        # depends on whether the enclosing scope is pinned.
+        def compose_scope(enclosing, name:, action:, attributes:, on_trace:, synchronous:, pin:)
+          own = attributes.to_h.transform_keys(&:to_s)
+          if enclosing.nil?
+            return { name: name, action: action, attributes: own, on_trace: on_trace,
+                     synchronous: synchronous ? true : false, pin: pin ? true : false }
+          end
+
+          merged = (enclosing[:attributes] || {}).merge(own)
+          return enclosing.merge(attributes: merged) if enclosing[:pin]
+
+          {
+            name: name, action: action, attributes: merged,
+            on_trace: on_trace.nil? ? enclosing[:on_trace] : on_trace,
+            synchronous: synchronous.nil? ? enclosing[:synchronous] : synchronous,
+            pin: pin ? true : false
+          }
+        end
 
         def report_turn(payload, turn)
           agent = turn.agent || resolve_agent(payload) || DEFAULT_AGENT
