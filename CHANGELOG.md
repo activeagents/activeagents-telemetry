@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.2] - 2026-09-22
+
+### Added
+
+- `RubyLLM.with_agent` scopes compose. Inside an enclosing scope, a nested
+  call merges its `attributes` onto the enclosing ones (a nested key wins on
+  collision) and inherits `on_trace` and `synchronous` unless it passes its
+  own. `synchronous:` now defaults to `nil`, meaning "inherit, else false",
+  so an explicit `synchronous: false` still overrides an inherited `true`.
+  Without `pin`, a nested scope replaces `name` and `action` as before.
+- `RubyLLM.with_agent` takes `pin: true`. A pinned scope owns the turn's
+  identity: while it is active a nested `with_agent` may only add
+  attributes, and the pinned scope's `name`, `action`, `on_trace` and
+  `synchronous` stay in force whatever the nested call passes. The previous
+  scope is still restored exactly on exit, including when the block raises.
+- `RubyLLM.correlation_tracer(synchronous: true, pin: true)` returns the
+  `tracer:` lambda `ActiveAgent::Evals::Correlation` (activeagent >= 1.6.3)
+  expects, `->(name, action:, attributes:, on_trace:, &block)`, opening a
+  pinned, synchronous `with_agent` scope with those arguments. activeagent
+  is not a dependency; only the lambda's signature is shared.
+
+### Fixed
+
+- A `with_agent` scope opened inside another one replaced it outright, so
+  when an evaluation replay wrapped the code under test in a scope carrying
+  `eval.*` attributes, an `on_trace` callback and `synchronous: true`, and
+  that code opened its own scope around the actual `chat.ask`, the trace
+  lost the evaluation attributes, the callback never received the trace id
+  and delivery went back to the background thread. Nested scopes now
+  compose as described above, and an evaluation pins its scope so the inner
+  one cannot detach the trace from it.
+
+The core gem is republished at 0.3.2 with no changes, so the two gems stay on
+one version.
+
+
 ## [0.3.1] - 2026-09-20
 
 ### Fixed
