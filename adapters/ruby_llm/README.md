@@ -124,10 +124,66 @@ exceptions. A turn keeps the scope it started under, so a turn left open by a
 pending tool call and closed later by `flush!` still reports with this agent,
 attributes and callback, and a turn that started outside any scope never adopts
 one. Context
-is restored after the block, including when it raises, and nested scopes use
-their own attributes. A callback error is logged by exception class without
-dropping the trace. Attribute redaction and content-capture settings continue to
-apply.
+is restored after the block, including when it raises. A callback error is
+logged by exception class without dropping the trace. Attribute redaction and
+content-capture settings continue to apply.
+
+### Nested scopes
+
+Scopes compose, so an evaluation can wrap code that names its own agent
+without losing what the evaluation attached. When a `with_agent` block opens
+inside another one:
+
+| Setting | Nested scope inside a plain scope | Nested scope inside a `pin: true` scope |
+|---------|-----------------------------------|------------------------------------------|
+| `attributes` | Merged: enclosing first, nested keys win on collision | Merged the same way |
+| `on_trace` | Inherited unless the nested call passes its own | The pinned scope's callback stays in force |
+| `synchronous` | Inherited unless the nested call passes its own (`nil`, the default, inherits; an explicit `false` overrides an inherited `true`) | The pinned scope's setting stays in force |
+| `name` / `action` | Replaced by the nested scope | The pinned scope's identity stays in force |
+
+A pinned scope owns the turn's identity: while it is active, a nested
+`with_agent` may only add attributes, and it stays pinned however deep the
+nesting goes. The previous scope is restored exactly on exit, including when
+the block raises. The `agent.*` identity keys are always written last, so an
+attribute with one of those names never overrides the reported agent.
+
+```ruby
+ActiveAgents::Telemetry::RubyLLM.with_agent(
+  "SupportAgent", action: "replay",
+  attributes: { "eval.run_id" => run_id, "eval.result_id" => result_id },
+  on_trace: ->(trace) { result.trace_id = trace.trace_id },
+  synchronous: true, pin: true
+) do
+  # The code under test names its own scope around the actual call. The
+  # trace reports as SupportAgent.replay with eval.* and sparkle.role, the
+  # evaluation's on_trace receives it, and it is delivered before this
+  # block returns.
+  ActiveAgents::Telemetry::RubyLLM.with_agent("SupportAgent", action: "respond",
+    attributes: { "sparkle.role" => "assistant" }) do
+    chat.ask(prompt)
+  end
+end
+```
+
+### Correlating with ActiveAgent evaluations
+
+`ActiveAgent::Evals::Correlation` (activeagent >= 1.6.3) takes a `tracer:`
+that it calls as `tracer.call(name, action:, attributes:, on_trace:) { ... }`
+around each replay, and expects `on_trace` to receive something answering
+`#trace_id`. `correlation_tracer` returns exactly that lambda, opening a
+pinned, synchronous `with_agent` scope with the arguments it is given and
+returning the block's value:
+
+```ruby
+ActiveAgent::Evals::Correlation.new(
+  agent_name: "SupportAgent",
+  tracer: ActiveAgents::Telemetry::RubyLLM.correlation_tracer
+)
+```
+
+`correlation_tracer(synchronous: false)` or `correlation_tracer(pin: false)`
+relaxes either default. This gem does not depend on activeagent; the only
+contract shared with it is the lambda's signature.
 
 Report publication and trace ingestion are separate operations. Persist each run
 and result ID in the evaluation report and attach the same IDs to its response and
