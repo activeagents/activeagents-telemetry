@@ -50,10 +50,26 @@ jobs:
           bundler-cache: true
       # The action publishes no v1 tag; @main is the ref its docs pin.
       - uses: rubygems/configure-rubygems-credentials@main
+      # Each gem is pushed only when RubyGems lacks its version, so a tag
+      # pushed after a workflow_dispatch already published the release (or
+      # a re-run) attaches the gems to the GitHub release and passes,
+      # instead of failing on RubyGems' refusal to overwrite a version.
       - name: Publish the core, then the adapter that depends on it
         run: |
-          gem build activeagents-telemetry.gemspec
-          gem push activeagents-telemetry-*.gem
+          publish() {
+            name="$1"; gemspec="$2"
+            gem build "$gemspec"
+            gem_path=$(ls "$name"-[0-9]*.gem)
+            version=$(basename "$gem_path" .gem | sed -E "s/^${name}-//")
+            # `gem list --all` prints one line: `name (1.2.0, 1.1.0, ...)`,
+            # so the version is matched between its delimiters.
+            if gem list --remote --exact --all "$name" | tr -d ' ' |
+                 grep -qE "[(,]${version//./\\.}[,)]"; then
+              echo "$name $version is already on RubyGems; nothing to do."
+            else
+              gem push "$gem_path"
+            fi
+          }
+          publish activeagents-telemetry activeagents-telemetry.gemspec
           cd adapters/ruby_llm
-          gem build activeagents-telemetry-ruby_llm.gemspec
-          gem push activeagents-telemetry-ruby_llm-*.gem
+          publish activeagents-telemetry-ruby_llm activeagents-telemetry-ruby_llm.gemspec
